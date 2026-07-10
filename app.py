@@ -74,7 +74,6 @@ c_filtro_anio, _ = st.columns([1, 3])
 with c_filtro_anio:
     anio_sel = st.selectbox("📅 Período de Análisis (Año):", ["TODOS"] + lista_anios)
 
-# 🚨 SOLUCIÓN AL CRASH: .copy() y .reset_index() obligan a crear una tabla limpia en memoria
 if anio_sel != "TODOS":
     df = df_completo[df_completo['Año'] == anio_sel].copy().reset_index(drop=True)
 else:
@@ -129,27 +128,33 @@ with tab_general:
         
     st.divider()
     
+    # 🚨 SOLUCIÓN DEFINITIVA AL CRASH: Semáforo por Emojis en texto plano
     st.markdown("#### 🚥 Monitor de Tickets Activos y Semáforo de Tiempos")
     
-    def aplicar_semaforo(row):
+    def generar_semaforo_texto(row):
         estado = row['Estado actual']
         dias_creacion = row['Días desde Creación']
         dias_estado = row['Días en Estado Actual']
         
         if estado == "Pedido Completo":
-            if dias_estado <= 15: return ['background-color: #c3f9c3; color: black'] * len(row)
-            elif 15 < dias_estado <= 30: return ['background-color: #fcf9a8; color: black'] * len(row)
-            else: return ['background-color: #f9c3c3; color: black'] * len(row)
+            if dias_estado <= 15: return '🟢 A tiempo (Taller)'
+            elif 15 < dias_estado <= 30: return '🟡 Precaución (Taller)'
+            else: return '🔴 Demorado (Taller)'
         else:
-            if dias_creacion > 15: return ['background-color: #ff9999; color: black; font-weight: bold'] * len(row)
-            else: return [''] * len(row)
+            if dias_creacion > 15: return '🚨 URGENTE (Repuestos)'
+            else: return '⚪ En plazo normal'
 
-    # 🚨 SOLUCIÓN AL CRASH: Separar la tabla visual y convertir fechas a texto antes de pintarlas
     df_visible = df.drop(columns=['Año', 'Mes_Num', 'Mes'], errors='ignore').copy()
+    
+    # Insertamos la alerta como la primera columna de la tabla para que resalte
+    df_visible.insert(0, 'Alerta SLA', df_visible.apply(generar_semaforo_texto, axis=1))
+    
+    # Convertimos fechas a texto para evitar cualquier otro error de lectura
     df_visible['Fecha de creación'] = df_visible['Fecha de creación'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
     df_visible['Última actualización'] = df_visible['Última actualización'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
 
-    st.dataframe(df_visible.style.apply(aplicar_semaforo, axis=1), width="stretch", hide_index=True)
+    # Mostramos la tabla completamente limpia, sin .style.apply
+    st.dataframe(df_visible, width="stretch", hide_index=True)
 
 # ==========================================
 # PESTAÑA 2: ASESORES EN DETALLE
@@ -196,6 +201,10 @@ with tab_asesores:
         
         st.markdown(f"#### 📋 Listado Completo de Pedidos de: {asesor_sel}")
         df_as_display = df_as.sort_values(by='Días desde Creación', ascending=False).drop(columns=['De', 'Año', 'Mes_Num', 'Mes'], errors='ignore')
+        
+        # Le aplicamos la misma columna de estado visual para el asesor
+        df_as_display.insert(0, 'Alerta SLA', df_as_display.apply(generar_semaforo_texto, axis=1))
+        
         df_as_display['Fecha de creación'] = df_as_display['Fecha de creación'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
         df_as_display['Última actualización'] = df_as_display['Última actualización'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
         
