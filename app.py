@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-st.set_config(layout="wide")
+# CORRECCIÓN: El comando correcto es st.set_page_config
+st.set_page_config(layout="wide")
 st.title("📦 Tablero de Gestión de Repuestos")
 
 # --- CARGA Y LIMPIEZA ---
