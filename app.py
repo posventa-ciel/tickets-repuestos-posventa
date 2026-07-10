@@ -74,8 +74,9 @@ c_filtro_anio, _ = st.columns([1, 3])
 with c_filtro_anio:
     anio_sel = st.selectbox("📅 Período de Análisis (Año):", ["TODOS"] + lista_anios)
 
+# 🚨 SOLUCIÓN AL CRASH: .copy() y .reset_index() obligan a crear una tabla limpia en memoria
 if anio_sel != "TODOS":
-    df = df_completo[df_completo['Año'] == anio_sel]
+    df = df_completo[df_completo['Año'] == anio_sel].copy().reset_index(drop=True)
 else:
     df = df_completo.copy()
 
@@ -143,7 +144,11 @@ with tab_general:
             if dias_creacion > 15: return ['background-color: #ff9999; color: black; font-weight: bold'] * len(row)
             else: return [''] * len(row)
 
-    df_visible = df.drop(columns=['Año', 'Mes_Num', 'Mes'], errors='ignore')
+    # 🚨 SOLUCIÓN AL CRASH: Separar la tabla visual y convertir fechas a texto antes de pintarlas
+    df_visible = df.drop(columns=['Año', 'Mes_Num', 'Mes'], errors='ignore').copy()
+    df_visible['Fecha de creación'] = df_visible['Fecha de creación'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
+    df_visible['Última actualización'] = df_visible['Última actualización'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
+
     st.dataframe(df_visible.style.apply(aplicar_semaforo, axis=1), width="stretch", hide_index=True)
 
 # ==========================================
@@ -168,12 +173,14 @@ with tab_asesores:
         st.plotly_chart(fig_rank, width="stretch")
         
         st.markdown("#### ⏳ Los 5 Tickets más antiguos del período seleccionado")
-        top_atrasados = df.sort_values(by='Días desde Creación', ascending=False).head(5)
+        top_atrasados = df.sort_values(by='Días desde Creación', ascending=False).head(5).copy()
+        top_atrasados['Fecha de creación'] = top_atrasados['Fecha de creación'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
+        
         st.dataframe(top_atrasados[['Número de Ticket', 'Fecha de creación', 'De', 'Estado actual', 'Días desde Creación', 'Asunto']], 
                      width="stretch", hide_index=True)
         
     else:
-        df_as = df[df['De'] == asesor_sel]
+        df_as = df[df['De'] == asesor_sel].copy()
         
         ca1, ca2, ca3, ca4 = st.columns(4)
         
@@ -189,4 +196,7 @@ with tab_asesores:
         
         st.markdown(f"#### 📋 Listado Completo de Pedidos de: {asesor_sel}")
         df_as_display = df_as.sort_values(by='Días desde Creación', ascending=False).drop(columns=['De', 'Año', 'Mes_Num', 'Mes'], errors='ignore')
+        df_as_display['Fecha de creación'] = df_as_display['Fecha de creación'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
+        df_as_display['Última actualización'] = df_as_display['Última actualización'].dt.strftime('%d/%m/%Y %H:%M').fillna('Sin Fecha')
+        
         st.dataframe(df_as_display, width="stretch", hide_index=True)
