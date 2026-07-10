@@ -4,29 +4,30 @@ import datetime
 
 # 1. Configuración de la página
 st.set_page_config(page_title="Seguimiento de Tickets - Repuestos", layout="wide")
-st.title("📦 Tablero de Seguimiento: Tickets de Repuestos")
-st.markdown("Resumen general de pedidos, estados y demoras en el sector de repuestos.")
+st.title("🚥 Tablero de Seguimiento: Alertas y SLAs")
+st.markdown("Control de tiempos de entrega de repuestos y demoras en taller.")
 st.divider()
 
-# 2. Leer los datos directamente del Google Sheet Público
-# Transformamos tu link para que se descargue como CSV automáticamente
+# 2. Leer los datos
 SHEET_URL = "https://docs.google.com/spreadsheets/d/14jP7-5vs_yuK5JqeTlPgF2lFT2eHI1RqQOSqG2_UZRw/export?format=csv&gid=0"
 
-@st.cache_data(ttl=600) # Cacheamos los datos por 10 minutos para que la app sea rápida
+@st.cache_data(ttl=600) 
 def cargar_datos():
-    # Leemos el CSV. Como las fechas en Argentina son Día/Mes/Año, usamos dayfirst=True
     df = pd.read_csv(SHEET_URL)
     
-    # Convertimos las columnas de fecha a formato datetime de Pandas para poder hacer cálculos
+    # Convertimos las fechas
     df['Fecha de creación'] = pd.to_datetime(df['Fecha de creación'], format='%d/%m/%Y %H:%M', errors='coerce')
     df['Última actualización'] = pd.to_datetime(df['Última actualización'], format='%d/%m/%Y %H:%M', errors='coerce')
     
-    # Calculamos los "Días de Demora" (desde que se creó hasta hoy)
     hoy = pd.Timestamp.now()
-    df['Días Demora'] = (hoy - df['Fecha de creación']).dt.days
     
-    # Rellenamos los días nulos con 0 por si hay errores de fecha
-    df['Días Demora'] = df['Días Demora'].fillna(0).astype(int)
+    # Cálculo 1: Días desde la creación (Para regla general y regla de repuestos)
+    df['Días desde Creación'] = (hoy - df['Fecha de creación']).dt.days
+    df['Días desde Creación'] = df['Días desde Creación'].fillna(0).astype(int)
+    
+    # Cálculo 2: Días en el estado actual (Para medir al taller cuando ya está completo)
+    df['Días en Estado Actual'] = (hoy - df['Última actualización']).dt.days
+    df['Días en Estado Actual'] = df['Días en Estado Actual'].fillna(0).astype(int)
     
     return df
 
@@ -36,54 +37,68 @@ except Exception as e:
     st.error(f"Error al cargar los datos: {e}")
     st.stop()
 
-# 3. Lógica de Negocio (Estados)
-# ACA DEFINIMOS QUE ESTADOS CIERRAN EL TICKET (Modificar si hay más)
-estados_cerrados = ["Pedido Completo"]
+# 3. Lógica de Alertas
+# Tickets que no son "Pedido Completo" y llevan más de 15 días (Culpa de origen/fábrica/repuestos)
+mas_15_dias_sin_llegar = df[(df["Estado actual"] != "Pedido Completo") & (df["Días desde Creación"] > 15)]
 
-# Separamos los tickets activos de los cerrados
-df_activos = df[~df["Estado actual"].isin(estados_cerrados)]
-df_cerrados = df[df["Estado actual"].isin(estados_cerrados)]
+# Tickets generales que superaron los 30 días de vida
+mas_30_dias_global = df[df["Días desde Creación"] > 30]
 
-# 4. KPI's (Métricas Generales)
-st.subheader("Resumen General (Tickets Activos)")
-col1, col2, col3, col4 = st.columns(4)
+# 4. KPI's (Métricas de Alertas)
+st.subheader("Panel de Alertas")
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric(label="Total Tickets Activos", value=len(df_activos))
+    st.metric(label="Total Tickets Abiertos", value=len(df))
 with col2:
-    st.metric(label="Tickets Cerrados (Histórico)", value=len(df_cerrados))
+    st.metric(label="🚨 Demora Repuestos (>15 días sin llegar)", value=len(mas_15_dias_sin_llegar), 
+              help="Tickets con más de 15 días desde su creación que aún NO están en 'Pedido Completo'.")
 with col3:
-    # Promedio de demora solo de los tickets que siguen activos
-    demora_promedio = df_activos["Días Demora"].mean()
-    if pd.isna(demora_promedio): demora_promedio = 0
-    st.metric(label="Demora Promedio (Días)", value=round(demora_promedio, 1))
-with col4:
-    # Como no tenemos columna de monto aún, dejamos un placeholder
-    st.metric(label="Monto Detenido ($)", value="Falta Columna", help="No se detectó columna de montos en el Excel.")
+    st.metric(label="⚠️ Demora Global (>30 días totales)", value=len(mas_30_dias_global),
+              help="Tickets que superaron los 30 días de antigüedad desde su creación, independientemente de su estado.")
 
 st.divider()
 
-# 5. Gráficos y Tablas
-col_graf1, col_graf2 = st.columns(2)
+# 5. Función de Semáforo (Colores para la tabla)
+def aplicar_semaforo(row):
+    estado = row['Estado actual']
+    dias_creacion = row['Días desde Creación']
+    dias_estado = row['Días en Estado Actual']
+    
+    # Reglas para cuando el repuesto YA LLEGÓ (Evaluamos al taller)
+    if estado == "Pedido Completo":
+        if dias_estado <= 15:
+            return ['background-color: #c3f9c3; color: black'] * len(row) # Verde suave
+        elif 15 < dias_estado <= 30:
+            return ['background-color: #fcf9a8; color: black'] * len(row) # Amarillo suave
+        else:
+            return ['background-color: #f9c3c3; color: black'] * len(row) # Rojo suave
+            
+    # Reglas para cuando el repuesto AÚN NO LLEGÓ (Evaluamos a repuestos)
+    else:
+        if dias_creacion > 15:
+            # Alerta roja clara porque la pieza está demorada
+            return ['background-color: #ff9999; color: black; font-weight: bold'] * len(row) 
+        else:
+            # Sin color, tiempo normal de espera
+            return [''] * len(row)
 
-with col_graf1:
-    st.subheader("Tickets Activos por Asesor ('De')")
-    # Agrupamos por la columna 'De' y contamos los tickets
-    tickets_por_asesor = df_activos["De"].value_counts()
-    st.bar_chart(tickets_por_asesor)
+# 6. Mostrar la Tabla con el Semáforo
+st.subheader("Detalle de Tickets (Semáforo Inteligente)")
+st.markdown("""
+**Referencias de color:**
+* 🟩 **Verde:** Repuesto llegado ('Pedido Completo'). Taller en plazo ideal (0-15 días).
+* 🟨 **Amarillo:** Repuesto llegado. Taller en plazo de advertencia (16-30 días).
+* 🟥 **Rojo:** Repuesto llegado pero Taller demorado (>30 días) **Ó** Repuesto no llegó y pasaron >15 días desde la creación.
+""")
 
-with col_graf2:
-    st.subheader("Tickets Activos por Estado")
-    # Agrupamos por estado
-    tickets_por_estado = df_activos["Estado actual"].value_counts()
-    st.bar_chart(tickets_por_estado)
+# Aplicamos el estilo a nuestro DataFrame y lo mostramos
+# Ocultamos la columna "Última actualización" para no confundir si sabemos que viene mal de origen por ahora,
+# pero el cálculo por detrás se hace igual. Si querés verla, borrala de la lista de abajo.
+df_mostrar = df.drop(columns=['De', 'Asunto', 'Prioridad'], errors='ignore') # Limpiamos columnas menos urgentes visualmente
 
-st.divider()
-
-st.subheader("Detalle de Tickets Activos")
-# Mostramos la tabla filtrada (solo activos) ordenados por los que tienen más demora
 st.dataframe(
-    df_activos.sort_values(by="Días Demora", ascending=False), 
+    df.style.apply(aplicar_semaforo, axis=1), 
     use_container_width=True,
     hide_index=True
 )
