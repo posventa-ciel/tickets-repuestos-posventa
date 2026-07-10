@@ -2,71 +2,81 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Gestión Posventa - Pro", layout="wide")
+# CORRECCIÓN: El comando correcto es st.set_page_config
+st.set_page_config(layout="wide")
+st.title("📦 Tablero de Gestión de Repuestos")
 
-# CSS Profesional
-st.markdown("""<style>
-    .kpi-card { background-color: white; border: 1px solid #e0e0e0; padding: 12px 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 8px; }
-    .kpi-card p { font-size: 0.8rem; margin: 0; color: #666; font-weight: 600; }
-    .kpi-card h2 { font-size: 1.6rem; margin: 4px 0; color: #00235d; }
-</style>""", unsafe_allow_html=True)
+# --- CARGA Y LIMPIEZA ---
+SHEET_URL = "https://docs.google.com/spreadsheets/d/14jP7-5vs_yuK5JqeTlPgF2lFT2eHI1RqQOSqG2_UZRw/export?format=csv&gid=0"
 
-# --- CARGA DATOS ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300) 
 def cargar_datos():
-    url = "https://docs.google.com/spreadsheets/d/14jP7-5vs_yuK5JqeTlPgF2lFT2eHI1RqQOSqG2_UZRw/export?format=csv&gid=0"
-    df = pd.read_csv(url)
+    df = pd.read_csv(SHEET_URL)
     df['Fecha de creación'] = pd.to_datetime(df['Fecha de creación'], dayfirst=True, errors='coerce')
-    df['Año'] = df['Fecha de creación'].dt.year
-    df['Días desde Creación'] = (pd.Timestamp.now() - df['Fecha de creación']).dt.days.fillna(0).astype(int)
+    hoy = pd.Timestamp.now()
+    df['Días desde Creación'] = (hoy - df['Fecha de creación']).dt.days.fillna(0).astype(int)
+    df['Año'] = df['Fecha de creación'].dt.year.fillna(2026).astype(int).astype(str)
     return df
 
-df = cargar_datos()
+df_full = cargar_datos()
 
-# --- PESTAÑAS ---
+# Sidebar: Filtros Globales
+st.sidebar.header("Filtros Globales")
+anios = ["TODOS"] + sorted(df_full['Año'].unique().tolist(), reverse=True)
+anio_sel = st.sidebar.selectbox("Año:", anios)
+df = df_full[df_full['Año'] == anio_sel].copy() if anio_sel != "TODOS" else df_full.copy()
+
 tab_resumen, tab_asesores = st.tabs(["📋 Resumen General", "👔 Gestión por Asesor"])
 
 with tab_resumen:
-    st.title("📊 Dashboard Ejecutivo")
-    
-    # Filtro Año
-    años = sorted(df['Año'].dropna().unique().astype(int).tolist())
-    año_sel = st.multiselect("Filtrar por año:", años, default=años[-1:])
-    df_filtrado = df[df['Año'].isin(año_sel)]
-
-    # KPIs
+    # 1. Tarjetas de Métricas (KPIs)
     c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(f'<div class="kpi-card"><p>Total Tickets</p><h2>{len(df_filtrado)}</h2></div>', unsafe_allow_html=True)
-    c2.markdown(f'<div class="kpi-card"><p>Promedio Días</p><h2>{round(df_filtrado["Días desde Creación"].mean(), 1)}</h2></div>', unsafe_allow_html=True)
-    c3.markdown(f'<div class="kpi-card"><p>Tickets > 30 días</p><h2>{len(df_filtrado[df_filtrado["Días desde Creación"] > 30])}</h2></div>', unsafe_allow_html=True)
-    c4.markdown(f'<div class="kpi-card"><p>Completados</p><h2>{len(df_filtrado[df_filtrado["Estado actual"] == "Pedido Completo"])}</h2></div>', unsafe_allow_html=True)
-
-    # Gráficos
+    c1.metric("Total Tickets", len(df))
+    c2.metric("Tickets > 30 días", len(df[df['Días desde Creación'] > 30]))
+    c3.metric("Promedio Demora", f"{round(df['Días desde Creación'].mean(), 1)} días")
+    c4.metric("Más Antiguo", f"{df['Días desde Creación'].max()} días")
+    
+    st.divider()
+    
+    # 2. Gráficos Generales
     g1, g2 = st.columns(2)
     with g1:
-        fig_estado = px.pie(df_filtrado, names='Estado actual', title="Distribución por Estado")
-        st.plotly_chart(fig_estado, use_container_width=True)
+        st.write("### Tickets por Estado")
+        fig1 = px.pie(df, names='Estado actual', title="Distribución por Estado")
+        st.plotly_chart(fig1, use_container_width=True)
     with g2:
-        fig_evol = px.histogram(df_filtrado, x='Fecha de creación', title="Volumen de Ingreso de Tickets")
-        st.plotly_chart(fig_evol, use_container_width=True)
+        st.write("### Tickets por Asesor")
+        fig2 = px.bar(df['De'].value_counts().reset_index(), x='De', y='count', color='De')
+        st.plotly_chart(fig2, use_container_width=True)
+
+    st.write("### Tabla Detallada")
+    st.dataframe(df, use_container_width=True)
 
 with tab_asesores:
-    st.title("👔 Análisis de Asesores")
     asesores = sorted(df['De'].dropna().unique().tolist())
     asesor_sel = st.selectbox("Seleccionar Asesor:", asesores)
     
-    # Filtro año aplicado también al asesor
-    df_as = df[(df['De'] == asesor_sel) & (df['Año'].isin(año_sel))].copy()
+    df_as = df[df['De'] == asesor_sel].copy()
     
-    # Tarjetas del asesor
-    k1, k2, k3 = st.columns(3)
-    k1.markdown(f'<div class="kpi-card"><p>Tickets Asignados</p><h2>{len(df_as)}</h2></div>', unsafe_allow_html=True)
-    k2.markdown(f'<div class="kpi-card"><p>Eficiencia (Completos)</p><h2>{len(df_as[df_as["Estado actual"] == "Pedido Completo"])}</h2></div>', unsafe_allow_html=True)
-    k3.markdown(f'<div class="kpi-card"><p>Antigüedad Max</p><h2>{df_as["Días desde Creación"].max()} días</h2></div>', unsafe_allow_html=True)
-    
-    # Gráfico de barras específico del asesor
-    fig_as = px.bar(df_as, x='Estado actual', title=f"Tickets de {asesor_sel} por Estado")
-    st.plotly_chart(fig_as, use_container_width=True)
-    
-    st.dataframe(df_as, use_container_width=True)
+    def status_label(dias):
+        if dias <= 30: return "🟢 < 30 días"
+        if dias <= 60: return "🟡 31-60 días"
+        if dias <= 120: return "🟠 61-120 días"
+        return "🔴 +120 días"
+
+    df_as['Antigüedad'] = df_as['Días desde Creación'].apply(status_label)
+    orden = ["🟢 < 30 días", "🟡 31-60 días", "🟠 61-120 días", "🔴 +120 días"]
+
+    for estado in df_as['Estado actual'].unique():
+        st.subheader(f"Estado: {estado}")
+        df_estado = df_as[df_as['Estado actual'] == estado]
+        
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            st.dataframe(df_estado.drop(columns=['Año']), use_container_width=True, hide_index=True)
+        with c2:
+            dist = df_estado['Antigüedad'].value_counts().reindex(orden, fill_value=0).reset_index()
+            fig = px.bar(dist, x='count', y='Antigüedad', orientation='h', title="Antigüedad", height=250, category_orders={"Antigüedad": orden})
+            fig.update_layout(margin=dict(l=0, r=0, t=30, b=0), xaxis_title=None, yaxis_title=None)
+            st.plotly_chart(fig, use_container_width=True)
+        st.divider()
