@@ -7,7 +7,7 @@ import datetime
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Seguimiento de Tickets - Repuestos", layout="wide")
 
-# --- ESTILOS CSS INYECTADOS (Estilo unificado con tu app de Chapa) ---
+# --- ESTILOS CSS INYECTADOS ---
 st.markdown("""<style>
     .metric-card { 
         background-color: white; 
@@ -36,7 +36,6 @@ st.divider()
 # --- CARGA Y LIMPIEZA DE DATOS ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/14jP7-5vs_yuK5JqeTlPgF2lFT2eHI1RqQOSqG2_UZRw/export?format=csv&gid=0"
 
-# Diccionario para mapear meses en español
 MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 
             7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 
@@ -44,22 +43,18 @@ MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Jun
 def cargar_y_limpiar_datos():
     df = pd.read_csv(SHEET_URL)
     
-    # Parseo de fechas (Formato de osTicket)
     df['Fecha de creación'] = pd.to_datetime(df['Fecha de creación'], format='%d/%m/%Y %H:%M', errors='coerce')
     df['Última actualización'] = pd.to_datetime(df['Última actualización'], format='%d/%m/%Y %H:%M', errors='coerce')
     
     hoy = pd.Timestamp.now()
     
-    # Extraer componentes temporales
     df['Año'] = df['Fecha de creación'].dt.year.fillna(hoy.year).astype(int).astype(str)
     df['Mes_Num'] = df['Fecha de creación'].dt.month.fillna(1).astype(int)
     df['Mes'] = df['Mes_Num'].map(MESES_ES)
     
-    # Cálculos de envejecimiento y SLAs
     df['Días desde Creación'] = (hoy - df['Fecha de creación']).dt.days.fillna(0).astype(int)
     df['Días en Estado Actual'] = (hoy - df['Última actualización']).dt.days.fillna(0).astype(int)
     
-    # Limpieza de textos
     df['De'] = df['De'].fillna('SIN IDENTIFICAR').str.strip().str.upper()
     df['Estado actual'] = df['Estado actual'].fillna('SIN ESTADO').str.strip()
     
@@ -72,28 +67,24 @@ except Exception as e:
     st.stop()
 
 # ==========================================
-# 🔍 FILTRO GLOBAL DE AÑO (Selector superior)
+# 🔍 FILTRO GLOBAL DE AÑO
 # ==========================================
 lista_anios = sorted(df_completo['Año'].unique().tolist(), reverse=True)
 c_filtro_anio, _ = st.columns([1, 3])
 with c_filtro_anio:
     anio_sel = st.selectbox("📅 Período de Análisis (Año):", ["TODOS"] + lista_anios)
 
-# Aplicamos el filtro al DataFrame base que usarán todas las pestañas
 if anio_sel != "TODOS":
     df = df_completo[df_completo['Año'] == anio_sel]
 else:
     df = df_completo.copy()
 
-# --- DEFINICIÓN DE PESTAÑAS (TABS) ---
 tab_general, tab_asesores = st.tabs(["📋 Control General y Alertas", "Asesores en Detalle"])
 
 # ==========================================
 # PESTAÑA 1: CONTROL GENERAL Y ALERTAS
 # ==========================================
 with tab_general:
-    
-    # KPIs dinámicos basados en el año filtrado
     mas_15_dias_sin_llegar = df[(df["Estado actual"] != "Pedido Completo") & (df["Días desde Creación"] > 15)]
     mas_30_dias_global = df[df["Días desde Creación"] > 30]
     
@@ -104,7 +95,6 @@ with tab_general:
     
     st.divider()
     
-    # Sección de Gráficos Dinámicos
     cg1, cg2 = st.columns(2)
     
     with cg1:
@@ -124,7 +114,7 @@ with tab_general:
         fig_temporal = px.bar(df_graf, x='Eje', y='Tickets', text_auto=True,
                               color_discrete_sequence=['#00235d'], template="plotly_white")
         fig_temporal.update_layout(xaxis_title=x_title, yaxis_title="Cantidad", margin=dict(t=10, b=10))
-        st.plotly_chart(fig_temporal, use_container_width=True)
+        st.plotly_chart(fig_temporal, width="stretch")
         
     with cg2:
         st.markdown(f"#### 📊 Estado de la Carga de Trabajo ({'Año ' + anio_sel if anio_sel != 'TODOS' else 'Historial Global'})")
@@ -134,11 +124,10 @@ with tab_general:
         fig_estado = px.bar(df_estado, x='Tickets', y='Estado', orientation='h', text_auto=True,
                              color_discrete_sequence=['#17a2b8'], template="plotly_white")
         fig_estado.update_layout(xaxis_title="Cantidad de Tickets", yaxis_title="", margin=dict(t=10, b=10))
-        st.plotly_chart(fig_estado, use_container_width=True)
+        st.plotly_chart(fig_estado, width="stretch")
         
     st.divider()
     
-    # Tabla General con Semáforos corregida
     st.markdown("#### 🚥 Monitor de Tickets Activos y Semáforo de Tiempos")
     
     def aplicar_semaforo(row):
@@ -155,7 +144,7 @@ with tab_general:
             else: return [''] * len(row)
 
     df_visible = df.drop(columns=['Año', 'Mes_Num', 'Mes'], errors='ignore')
-    st.dataframe(df_visible.style.apply(aplicar_semaforo, axis=1), use_container_width=True, hide_index=True)
+    st.dataframe(df_visible.style.apply(aplicar_semaforo, axis=1), width="stretch", hide_index=True)
 
 # ==========================================
 # PESTAÑA 2: ASESORES EN DETALLE
@@ -176,12 +165,12 @@ with tab_asesores:
         fig_rank = px.bar(df_ranking, x='Asesor', y='Tickets Abiertos', text_auto=True,
                            color_discrete_sequence=['#28a745'], template="plotly_white")
         fig_rank.update_layout(xaxis_tickangle=-45, xaxis_title="", yaxis_title="Tickets")
-        st.plotly_chart(fig_rank, use_container_width=True)
+        st.plotly_chart(fig_rank, width="stretch")
         
         st.markdown("#### ⏳ Los 5 Tickets más antiguos del período seleccionado")
         top_atrasados = df.sort_values(by='Días desde Creación', ascending=False).head(5)
         st.dataframe(top_atrasados[['Número de Ticket', 'Fecha de creación', 'De', 'Estado actual', 'Días desde Creación', 'Asunto']], 
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
         
     else:
         df_as = df[df['De'] == asesor_sel]
@@ -200,4 +189,4 @@ with tab_asesores:
         
         st.markdown(f"#### 📋 Listado Completo de Pedidos de: {asesor_sel}")
         df_as_display = df_as.sort_values(by='Días desde Creación', ascending=False).drop(columns=['De', 'Año', 'Mes_Num', 'Mes'], errors='ignore')
-        st.dataframe(df_as_display, use_container_width=True, hide_index=True)
+        st.dataframe(df_as_display, width="stretch", hide_index=True)
