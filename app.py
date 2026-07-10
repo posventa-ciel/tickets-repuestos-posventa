@@ -36,34 +36,54 @@ st.divider()
 # --- CARGA Y LIMPIEZA DE DATOS ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/14jP7-5vs_yuK5JqeTlPgF2lFT2eHI1RqQOSqG2_UZRw/export?format=csv&gid=0"
 
+# Diccionario para mapear meses en español
+MESES_ES = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 
+            7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
+
 @st.cache_data(ttl=300) 
 def cargar_y_limpiar_datos():
     df = pd.read_csv(SHEET_URL)
     
-    # Parseo estricto de fechas (Formato de osTicket)
+    # Parseo de fechas (Formato de osTicket)
     df['Fecha de creación'] = pd.to_datetime(df['Fecha de creación'], format='%d/%m/%Y %H:%M', errors='coerce')
     df['Última actualización'] = pd.to_datetime(df['Última actualización'], format='%d/%m/%Y %H:%M', errors='coerce')
     
     hoy = pd.Timestamp.now()
     
-    # Extraer el Año para el análisis temporal que pediste
+    # Extraer componentes temporales
     df['Año'] = df['Fecha de creación'].dt.year.fillna(hoy.year).astype(int).astype(str)
+    df['Mes_Num'] = df['Fecha de creación'].dt.month.fillna(1).astype(int)
+    df['Mes'] = df['Mes_Num'].map(MESES_ES)
     
     # Cálculos de envejecimiento y SLAs
     df['Días desde Creación'] = (hoy - df['Fecha de creación']).dt.days.fillna(0).astype(int)
     df['Días en Estado Actual'] = (hoy - df['Última actualización']).dt.days.fillna(0).astype(int)
     
-    # Limpieza de nombres de asesores para evitar duplicados por espacios
+    # Limpieza de textos
     df['De'] = df['De'].fillna('SIN IDENTIFICAR').str.strip().str.upper()
     df['Estado actual'] = df['Estado actual'].fillna('SIN ESTADO').str.strip()
     
     return df
 
 try:
-    df = cargar_y_limpiar_datos()
+    df_completo = cargar_y_limpiar_datos()
 except Exception as e:
     st.error(f"Error procesando el Google Sheet: {e}")
     st.stop()
+
+# ==========================================
+# 🔍 FILTRO GLOBAL DE AÑO (Selector superior)
+# ==========================================
+lista_anios = sorted(df_completo['Año'].unique().tolist(), reverse=True)
+c_filtro_anio, _ = st.columns([1, 3])
+with c_filtro_anio:
+    anio_sel = st.selectbox("📅 Período de Análisis (Año):", ["TODOS"] + lista_anios)
+
+# Aplicamos el filtro al DataFrame base que usarán todas las pestañas
+if anio_sel != "TODOS":
+    df = df_completo[df_completo['Año'] == anio_sel]
+else:
+    df = df_completo.copy()
 
 # --- DEFINICIÓN DE PESTAÑAS (TABS) ---
 tab_general, tab_asesores = st.tabs(["📋 Control General y Alertas", "Asesores en Detalle"])
@@ -73,33 +93,41 @@ tab_general, tab_asesores = st.tabs(["📋 Control General y Alertas", "Asesores
 # ==========================================
 with tab_general:
     
-    # KPIs con diseño Metric Card de Chapa
+    # KPIs dinámicos basados en el año filtrado
     mas_15_dias_sin_llegar = df[(df["Estado actual"] != "Pedido Completo") & (df["Días desde Creación"] > 15)]
     mas_30_dias_global = df[df["Días desde Creación"] > 30]
     
     c1, c2, c3 = st.columns(3)
-    c1.markdown(f'<div class="metric-card"><div class="metric-title">Total Abiertos</div><div class="metric-value-number">{len(df)}</div><div class="metric-subtitle-blue">En proceso activo</div></div>', unsafe_allow_html=True)
+    c1.markdown(f'<div class="metric-card"><div class="metric-title">Total Abiertos</div><div class="metric-value-number">{len(df)}</div><div class="metric-subtitle-blue">Filtrado por año</div></div>', unsafe_allow_html=True)
     c2.markdown(f'<div class="metric-card" style="border-left: 5px solid #dc3545;"><div class="metric-title">🚨 Alerta Repuestos</div><div class="metric-value-number" style="color:#dc3545;">{len(mas_15_dias_sin_llegar)}</div><div class="metric-subtitle-red">> 15 días sin ser "Completo"</div></div>', unsafe_allow_html=True)
     c3.markdown(f'<div class="metric-card" style="border-left: 5px solid #ffc107;"><div class="metric-title">⚠️ Alerta Taller / Global</div><div class="metric-value-number" style="color:#856404;">{len(mas_30_dias_global)}</div><div class="metric-subtitle-green">> 30 días totales de vida</div></div>', unsafe_allow_html=True)
     
     st.divider()
     
-    # Sección de Gráficos de la Pestaña General
+    # Sección de Gráficos Dinámicos
     cg1, cg2 = st.columns(2)
     
     with cg1:
-        st.markdown("#### 📅 Historial: Tickets Abiertos por Año de Creación")
-        df_anio = df['Año'].value_counts().reset_index()
-        df_anio.columns = ['Año', 'Tickets']
-        df_anio = df_anio.sort_values(by='Año')
+        if anio_sel == "TODOS":
+            st.markdown("#### 📅 Historial: Tickets Abiertos por Año de Creación")
+            df_graf = df['Año'].value_counts().reset_index()
+            df_graf.columns = ['Eje', 'Tickets']
+            df_graf = df_graf.sort_values(by='Eje')
+            x_title = "Año de Apertura"
+        else:
+            st.markdown(f"#### 📅 Distribución Mensual de Tickets Abiertos - Año {anio_sel}")
+            df_graf = df.groupby(['Mes_Num', 'Mes']).size().reset_index(name='Tickets')
+            df_graf.columns = ['Mes_Num', 'Eje', 'Tickets']
+            df_graf = df_graf.sort_values(by='Mes_Num')
+            x_title = "Mes de Apertura"
         
-        fig_anio = px.bar(df_anio, x='Año', y='Tickets', text_auto=True,
-                          color_discrete_sequence=['#00235d'], template="plotly_white")
-        fig_anio.update_layout(xaxis_title="Año de Apertura", yaxis_title="Cantidad", margin=dict(t=10, b=10))
-        st.plotly_chart(fig_anio, use_container_width=True)
+        fig_temporal = px.bar(df_graf, x='Eje', y='Tickets', text_auto=True,
+                              color_discrete_sequence=['#00235d'], template="plotly_white")
+        fig_temporal.update_layout(xaxis_title=x_title, yaxis_title="Cantidad", margin=dict(t=10, b=10))
+        st.plotly_chart(fig_temporal, use_container_width=True)
         
     with cg2:
-        st.markdown("#### 📊 Estado de la Carga de Trabajo Global")
+        st.markdown(f"#### 📊 Estado de la Carga de Trabajo ({'Año ' + anio_sel if anio_sel != 'TODOS' else 'Historial Global'})")
         df_estado = df['Estado actual'].value_counts().reset_index()
         df_estado.columns = ['Estado', 'Tickets']
         
@@ -110,7 +138,7 @@ with tab_general:
         
     st.divider()
     
-    # Tabla General de Semáforos
+    # Tabla General con Semáforos corregida
     st.markdown("#### 🚥 Monitor de Tickets Activos y Semáforo de Tiempos")
     
     def aplicar_semaforo(row):
@@ -126,24 +154,22 @@ with tab_general:
             if dias_creacion > 15: return ['background-color: #ff9999; color: black; font-weight: bold'] * len(row)
             else: return [''] * len(row)
 
-    # Quitamos columnas secundarias para visualización compacta
-    df_visible = df.drop(columns=['Año'], errors='ignore')
+    df_visible = df.drop(columns=['Año', 'Mes_Num', 'Mes'], errors='ignore')
     st.dataframe(df_visible.style.apply(aplicar_semaforo, axis=1), use_container_width=True, hide_index=True)
 
 # ==========================================
 # PESTAÑA 2: ASESORES EN DETALLE
 # ==========================================
 with tab_asesores:
-    st.markdown("### 👔 Análisis de Trazabilidad por Asesor")
+    st.markdown(f"### 👔 Análisis de Trazabilidad por Asesor ({'Año ' + anio_sel if anio_sel != 'TODOS' else 'Historial Global'})")
     
-    # Selector de Asesor dinámico
     lista_asesores = sorted(df['De'].unique().tolist())
     asesor_sel = st.selectbox("Seleccionar un Asesor para ver su radiografía:", ["VER GRÁFICO COMPARATIVO"] + lista_asesores)
     
     st.divider()
     
     if asesor_sel == "VER GRÁFICO COMPARATIVO":
-        st.markdown("#### Comparativa Global: Cantidad de Tickets por Asesor")
+        st.markdown("#### Comparativa: Cantidad de Tickets Abiertos por Asesor")
         df_ranking = df['De'].value_counts().reset_index()
         df_ranking.columns = ['Asesor', 'Tickets Abiertos']
         
@@ -152,21 +178,19 @@ with tab_asesores:
         fig_rank.update_layout(xaxis_tickangle=-45, xaxis_title="", yaxis_title="Tickets")
         st.plotly_chart(fig_rank, use_container_width=True)
         
-        st.markdown("#### ⏳ Los 5 Tickets más antiguos del Taller (Urgentes de destrabar)")
+        st.markdown("#### ⏳ Los 5 Tickets más antiguos del período seleccionado")
         top_atrasados = df.sort_values(by='Días desde Creación', ascending=False).head(5)
         st.dataframe(top_atrasados[['Número de Ticket', 'Fecha de creación', 'De', 'Estado actual', 'Días desde Creación', 'Asunto']], 
                      use_container_width=True, hide_index=True)
         
     else:
-        # Filtrado de datos exclusivo para el asesor seleccionado
         df_as = df[df['De'] == asesor_sel]
         
-        # Tarjetas de rendimiento individuales del Asesor
         ca1, ca2, ca3, ca4 = st.columns(4)
         
         cant_tickets_as = len(df_as)
-        prom_demora_as = df_as['Días desde Creación'].mean()
-        max_demora_as = df_as['Días desde Creación'].max()
+        prom_demora_as = df_as['Días desde Creación'].mean() if cant_tickets_as > 0 else 0
+        max_demora_as = df_as['Días desde Creación'].max() if cant_tickets_as > 0 else 0
         criticos_as = len(df_as[df_as['Días desde Creación'] > 30])
         
         ca1.markdown(f'<div class="metric-card"><div class="metric-title">Tickets Pendientes</div><div class="metric-value-number">{cant_tickets_as}</div></div>', unsafe_allow_html=True)
@@ -175,7 +199,5 @@ with tab_asesores:
         ca4.markdown(f'<div class="metric-card"><div class="metric-title">Tickets Fuera de SLA</div><div class="metric-value-number" style="color:#6f42c1;">{criticos_as}</div><div class="metric-subtitle-red">> 30 días totales</div></div>', unsafe_allow_html=True)
         
         st.markdown(f"#### 📋 Listado Completo de Pedidos de: {asesor_sel}")
-        
-        # Tabla filtrada y ordenada por antigüedad del asesor elegido
-        df_as_display = df_as.sort_values(by='Días desde Creación', ascending=False).drop(columns=['De', 'Año'], errors='ignore')
+        df_as_display = df_as.sort_values(by='Días desde Creación', ascending=False).drop(columns=['De', 'Año', 'Mes_Num', 'Mes'], errors='ignore')
         st.dataframe(df_as_display, use_container_width=True, hide_index=True)
